@@ -111,7 +111,7 @@ class ImageOptimizer
 
         if ($optimizedSize < $originalSize) {
 
-            $storedPath = Storage::disk('public')->putFileAs(
+            $storedPath = Storage::disk('local')->putFileAs(
                 'attachments',
                 new File($tempPath),
                 $filename
@@ -138,7 +138,7 @@ class ImageOptimizer
 
         $originalPath = $file->store(
             'attachments',
-            'public'
+            'local'
         );
 
         return [

@@ -1,0 +1,314 @@
+{
+    "openapi": "3.0.0",
+    "info": {
+        "title": "Email Sender API",
+        "description": "Queue emails and replies with optional file attachments.",
+        "version": "1.0.0"
+    },
+    "servers": [
+        {
+            "url": "/",
+            "description": "Application server"
+        }
+    ],
+    "paths": {
+        "/api/emails": {
+            "get": {
+                "tags": [
+                    "Emails"
+                ],
+                "summary": "List emails",
+                "operationId": "listEmails",
+                "responses": {
+                    "200": {
+                        "description": "Emails retrieved successfully",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/Email"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "tags": [
+                    "Emails"
+                ],
+                "summary": "Queue an email for delivery",
+                "operationId": "queueEmail",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": {
+                                "required": [
+                                    "to",
+                                    "subject",
+                                    "body"
+                                ],
+                                "properties": {
+                                    "to[]": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string",
+                                            "format": "email"
+                                        },
+                                        "minItems": 1
+                                    },
+                                    "cc[]": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string",
+                                            "format": "email"
+                                        }
+                                    },
+                                    "bcc[]": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string",
+                                            "format": "email"
+                                        }
+                                    },
+                                    "subject": {
+                                        "type": "string",
+                                        "example": "Project update",
+                                        "maxLength": 255
+                                    },
+                                    "body": {
+                                        "type": "string",
+                                        "example": "Here is the latest update."
+                                    },
+                                    "scheduled_at": {
+                                        "type": "string",
+                                        "format": "date-time",
+                                        "nullable": true
+                                    },
+                                    "attachments[]": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string",
+                                            "format": "binary"
+                                        }
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "202": {
+                        "description": "Email queued successfully"
+                    },
+                    "422": {
+                        "description": "Validation error"
+                    }
+                }
+            }
+        },
+        "/api/emails/{email}": {
+            "delete": {
+                "tags": [
+                    "Emails"
+                ],
+                "summary": "Delete an email",
+                "operationId": "deleteEmail",
+                "parameters": [
+                    {
+                        "name": "email",
+                        "in": "path",
+                        "description": "Email ID",
+                        "required": true,
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "example": 1
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Email deleted successfully"
+                    },
+                    "404": {
+                        "description": "Email not found"
+                    }
+                }
+            }
+        },
+        "/api/emails/{email}/reply": {
+            "post": {
+                "tags": [
+                    "Emails"
+                ],
+                "summary": "Queue a reply to an email",
+                "operationId": "queueEmailReply",
+                "parameters": [
+                    {
+                        "name": "email",
+                        "in": "path",
+                        "description": "Email ID to reply to",
+                        "required": true,
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "example": 1
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": {
+                                "required": [
+                                    "body"
+                                ],
+                                "properties": {
+                                    "body": {
+                                        "type": "string",
+                                        "example": "Thanks for the update."
+                                    },
+                                    "attachments[]": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string",
+                                            "format": "binary"
+                                        }
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "202": {
+                        "description": "Reply queued successfully"
+                    },
+                    "404": {
+                        "description": "Email not found"
+                    },
+                    "422": {
+                        "description": "Validation error"
+                    }
+                }
+            }
+        }
+    },
+    "components": {
+        "schemas": {
+            "Attachment": {
+                "required": [
+                    "id",
+                    "file_name",
+                    "filepath",
+                    "mime_type",
+                    "file_size"
+                ],
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "example": 1
+                    },
+                    "file_name": {
+                        "type": "string",
+                        "example": "invoice.pdf"
+                    },
+                    "filepath": {
+                        "type": "string",
+                        "example": "attachments/abc123.pdf"
+                    },
+                    "mime_type": {
+                        "type": "string",
+                        "example": "application/pdf"
+                    },
+                    "file_size": {
+                        "type": "integer",
+                        "format": "int64",
+                        "example": 245760
+                    }
+                },
+                "type": "object"
+            },
+            "Email": {
+                "required": [
+                    "id",
+                    "sender",
+                    "recipient",
+                    "subject",
+                    "body"
+                ],
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "example": 1
+                    },
+                    "sender": {
+                        "type": "string",
+                        "format": "email",
+                        "example": "sender@example.com"
+                    },
+                    "recipient": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "format": "email"
+                        }
+                    },
+                    "cc": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "format": "email"
+                        }
+                    },
+                    "bcc": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "format": "email"
+                        }
+                    },
+                    "subject": {
+                        "type": "string",
+                        "example": "Project update"
+                    },
+                    "body": {
+                        "type": "string",
+                        "example": "Here is the latest update."
+                    },
+                    "scheduled_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "message_id": {
+                        "type": "string",
+                        "example": "<uuid@gmail.com>"
+                    },
+                    "in_reply_to": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "attachments": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/Attachment"
+                        }
+                    }
+                },
+                "type": "object"
+            }
+        }
+    },
+    "tags": [
+        {
+            "name": "Emails",
+            "description": "Email composition and reply operations"
+        }
+    ]
+}

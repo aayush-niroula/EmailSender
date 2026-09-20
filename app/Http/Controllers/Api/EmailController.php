@@ -9,76 +9,109 @@ use App\Models\Email;
 use App\Services\FileOptimizer;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use Inertia\Inertia;
+use OpenApi\Attributes as OA;
 
 class EmailController extends Controller
 {
-    public function store(
-        Request $request,
-        FileOptimizer $fileOptimizer
-    ) {
+    public function index()
+    {
+        return Inertia::render('emails', [
+            'emails' => Email::query()
+                ->with('attachments')
+                ->latest()
+                ->get(),
+        ]);
+    }
+
+    #[OA\Get(
+        path: '/api/emails',
+        operationId: 'listEmails',
+        tags: ['Emails'],
+        summary: 'List emails',
+        responses: [
+            new OA\Response(
+                response: 200,
+                description: 'Emails retrieved successfully',
+                content: new OA\JsonContent(
+                    type: 'array',
+                    items: new OA\Items(ref: '#/components/schemas/Email')
+                )
+            ),
+        ]
+    )]
+    public function apiIndex()
+    {
+        return response()->json(
+            Email::query()
+                ->with('attachments')
+                ->latest()
+                ->get()
+        );
+    }
+
+ #[OA\Post(
+    path:'/api/emails',
+    operationId:'queueEmail',
+    tags:['Emails'],
+    summary:'Queue an email for delivery',
+    requestBody: new OA\RequestBody(
+        required:true,
+        content:new OA\MediaType(
+            mediaType:'multipart/formdata',
+            schema: new OA\Schema(
+                required:["to",'subject','body'],
+                properties:[
+                    new OA\Property(property:'to[]',type:'array',minItems:1, items:new OA\Items(
+                        type:'string',format:'email' )),
+                    new OA\Property(property:'cc[]',type:'array',minItems:1, items:new OA\Items(
+                        type:'string',format:'email')),
+                    new OA\Property(property:'bcc[]',type:'array',minItems:1, items:new OA\Items(
+                        type:'string',format:'email')),
+                    new OA\Property(property:'subject',type:'string',maxLength:255,example:'Project example'),
+                    new OA\Property(property:'body',type:'string',example:'Here is the latest update'),
+                    new OA\Property(property:'scheduled_at',type:'string',format:'date-time',nullabe:true),
+                    new OA\Property(property:'attachments[]',type:'array',items:new OA\Items(type:'string',format:'binary') )
+                ]
+            )
+        )
+    ),
+    responses:[
+        new OA\Response(response:202,description:'Email queued successfully'),
+        new OA\Response(response:402,description:'Validation error'),
+    ]
+ )]
+    public function store(Request $request, FileOptimizer $fileOptimizer)
+    {
 
         $request->validate([
-            'to' => [
-                'required',
-                'array',
-                'min:1',
-            ],
+            'to' => ['required', 'array', 'min:1'],
 
-            'to.*' => [
-                'required',
-                'email',
-            ],
+            'to.*' => ['required', 'email', 'distinct'],
 
-            'cc' => [
-                'nullable',
-                'array',
-            ],
+            'cc' => ['nullable', 'array'],
+            'cc.*' => ['required', 'email', 'distinct'],
 
-            'cc.*' => [
-                'required',
-                'email',
-            ],
+            'bcc' => ['nullable', 'array'],
 
-            'bcc' => [
-                'nullable',
-                'array',
-            ],
+            'bcc.*' => ['required', 'email', 'distinct'],
 
-            'bcc.*' => [
-                'required',
-                'email',
-            ],
+            'subject' => ['required', 'string', 'max:255'],
 
-            'subject' => [
-                'required',
-                'string',
-                'max:255',
-            ],
+            'body' => ['required', 'string'],
 
-            'body' => [
-                'required',
-                'string',
-            ],
+            'scheduled_at' => ['nullable', 'date', 'after:now'],
 
-            'scheduled_at' => [
-                'nullable',
-                'date',
-                'after:now',
-            ],
+            'attachments' => ['nullable', 'array'],
 
-            'attachments' => [
-                'nullable',
-                'array',
-            ],
-
-            'attachments.*' => [
-                'file',
-                'max:10240',
-                'mimes:jpg,jpeg,png,gif,pdf,doc,docx,xls,xlsx,txt,zip',
-            ],
+            'attachments.*' => ['file', 'max:10240', 'mimes:jpg,jpeg,png,gif,pdf,doc,docx,xls,xlsx,txt,zip'],
         ]);
 
         $email = Email::create([
+
+            'thread_id' => (string) Str::uuid(),
             'sender' => config('mail.from.address'),
 
             'recipient' => $request->to,
@@ -94,6 +127,9 @@ class EmailController extends Controller
             'scheduled_at' => $request->filled('scheduled_at')
                 ? Carbon::parse($request->scheduled_at)
                 : null,
+            'message_id' => Str::uuid().'@gmail.com',
+            'in_reply_to' => null,
+            'delivery_status' => 'queued',
         ]);
 
         if ($request->hasFile('attachments')) {
@@ -119,7 +155,7 @@ class EmailController extends Controller
 
                     $path = $file->store(
                         'attachments',
-                        'public'
+                        'local'
                     );
 
                     Attachment::create([
@@ -154,5 +190,179 @@ class EmailController extends Controller
 
             'attachments' => $email->attachments,
         ], 202);
+    }
+
+    #[OA\Delete(
+        path: '/api/emails/{email}',
+        operationId: 'deleteEmail',
+        tags: ['Emails'],
+        summary: 'Delete an email',
+        parameters: [
+            new OA\Parameter(
+                name: 'email',
+                in: 'path',
+                required: true,
+                description: 'Email ID',
+                schema: new OA\Schema(type: 'integer'),
+                example: 1
+            ),
+        ],
+        responses: [
+            new OA\Response(response: 204, description: 'Email deleted successfully'),
+            new OA\Response(response: 404, description: 'Email not found'),
+        ]
+    )]
+    public function destroy(Email $email)
+    {
+        $email->load('attachments');
+
+        foreach ($email->attachments as $attachment) {
+            $disk = Storage::disk('local')->exists($attachment->filepath)
+                ? 'local'
+                : 'public';
+
+            Storage::disk($disk)->delete($attachment->filepath);
+        }
+
+        $email->delete();
+
+        return response()->noContent();
+    }
+
+    #[OA\Post(
+        path: '/api/emails/{email}/reply',
+        operationId: 'queueEmailReply',
+        tags: ['Emails'],
+        summary: 'Queue a reply to an email',
+        parameters: [
+            new OA\Parameter(
+                name: 'email',
+                in: 'path',
+                required: true,
+                description: 'Email ID to reply to',
+                schema: new OA\Schema(type: 'integer'),
+                example: 1
+            ),
+        ],
+        requestBody: new OA\RequestBody(
+            required: true,
+            content: new OA\MediaType(
+                mediaType: 'multipart/form-data',
+                schema: new OA\Schema(
+                    required: ['body'],
+                    properties: [
+                        new OA\Property(property: 'body', type: 'string', example: 'Thanks for the update.'),
+                        new OA\Property(property: 'attachments[]', type: 'array', items: new OA\Items(type: 'string', format: 'binary')),
+                    ]
+                )
+            )
+        ),
+        responses: [
+            new OA\Response(response: 202, description: 'Reply queued successfully'),
+            new OA\Response(response: 404, description: 'Email not found'),
+            new OA\Response(response: 422, description: 'Validation error'),
+        ]
+    )]
+    public function reply(
+        Request $request,
+        Email $email,
+        FileOptimizer $fileOptimizer
+    ) {
+        $request->validate([
+            'body' => [
+                'required',
+                'string',
+            ],
+
+            'attachments' => [
+                'nullable',
+                'array',
+            ],
+
+            'attachments.*' => [
+                'file',
+                'max:10240',
+                'mimes:jpg,jpeg,png,gif,pdf,doc,docx,xls,xlsx,txt,zip',
+            ],
+        ]);
+
+        $reply = Email::create([
+            'thread_id' => $email->thread_id,
+
+            'sender' => config('mail.from.address'),
+
+            'recipient' => array_values(array_unique($email->recipient ?? [])),
+
+            'cc' => [],
+
+            'bcc' => [],
+
+            'subject' => str_starts_with($email->subject, 'Re:')
+                ? $email->subject
+                : 'Re: '.$email->subject,
+
+            'body' => $request->body,
+
+            'scheduled_at' => null,
+
+            'message_id' => Str::uuid().'@gmail.com',
+
+            'in_reply_to' => $email->message_id,
+            'delivery_status' => 'queued',
+        ]);
+
+        if ($request->hasFile('attachments')) {
+            foreach ($request->file('attachments') as $file) {
+
+                $result = $fileOptimizer->optimize($file);
+
+                if ($result['optimized'] ?? false) {
+
+                    Attachment::create([
+                        'email_id' => $reply->id,
+                        'file_name' => $result['file_name'],
+                        'filepath' => $result['filepath'],
+                        'mime_type' => $result['mime_type'],
+                        'file_size' => $result['file_size'],
+                    ]);
+
+                } else {
+
+                    $path = $file->store(
+                        'attachments',
+                        'local'
+                    );
+
+                    Attachment::create([
+                        'email_id' => $reply->id,
+                        'file_name' => $file->getClientOriginalName(),
+                        'filepath' => $path,
+                        'mime_type' => $file->getMimeType(),
+                        'file_size' => $file->getSize(),
+                    ]);
+                }
+            }
+        }
+
+        SendEmailJob::dispatch($reply);
+
+        return response()->json([
+            'message' => 'Reply queued successfully',
+            'email' => $reply->load('attachments'),
+        ], 202);
+    }
+
+    public function show(Email $email)
+    {
+        $conversation = Email::query()
+            ->where('thread_id', $email->thread_id)
+            ->with('attachments')
+            ->oldest()
+            ->get();
+
+        return Inertia::render('emailshow', [
+            'email' => $email->load('attachments'),
+            'conversation' => $conversation,
+        ]);
     }
 }

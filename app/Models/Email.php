@@ -7,7 +7,6 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Email extends Model
 {
-    //
     protected $fillable = [
         'thread_id',
         'sender',
@@ -19,6 +18,9 @@ class Email extends Model
         'scheduled_at',
         'message_id',
         'in_reply_to',
+        'delivery_status',
+        'delivered_at',
+        'failure_reason',
     ];
 
     protected $casts = [
@@ -26,6 +28,7 @@ class Email extends Model
         'cc' => 'array',
         'bcc' => 'array',
         'scheduled_at' => 'datetime',
+        'delivered_at' => 'datetime',
     ];
 
     public function attachments(): HasMany

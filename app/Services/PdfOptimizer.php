@@ -64,7 +64,7 @@ class PdfOptimizer
 
         if ($optimizedSize < $originalSize) {
 
-            $storedPath = Storage::disk('public')->putFileAs(
+            $storedPath = Storage::disk('local')->putFileAs(
                 'attachments',
                 new File($outputPath),
                 $filename

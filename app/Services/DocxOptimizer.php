@@ -102,7 +102,7 @@ class DocxOptimizer
 
             $filename = uniqid('optimized_').'.docx';
 
-            $storedPath = Storage::disk('public')->putFileAs(
+            $storedPath = Storage::disk('local')->putFileAs(
                 'attachments',
                 new File($outputFile),
                 $filename

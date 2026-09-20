@@ -11,7 +11,7 @@ return new class extends Migration
         Schema::create('emails', function (Blueprint $table) {
             $table->id();
 
-            $table->string('thread_id')->nullable();
+            $table->string('thread_id')->index();
 
             $table->string('sender')->nullable();
             $table->json('recipient');
@@ -22,8 +22,8 @@ return new class extends Migration
             $table->string('subject');
             $table->longText('body');
 
-            $table->string('message_id')->nullable();
-            $table->string('in_reply_to')->nullable();
+            $table->string('message_id')->unique();
+            $table->string('in_reply_to')->nullable()->index();
 
             $table->timestamps();
         });
