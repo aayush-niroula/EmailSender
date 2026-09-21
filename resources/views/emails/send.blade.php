@@ -32,7 +32,7 @@
                             </h2>
 
                             <div style="font-size: 15px; line-height: 1.7; color: #4b5563;">
-                                {!! nl2br(e($body)) !!}
+                              {!! $body !!}
                             </div>
 
                         </td>

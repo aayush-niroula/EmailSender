@@ -1,463 +1,714 @@
-import { Head } from '@inertiajs/react';
-import { Paperclip, PenLine, Send, X } from 'lucide-react';
-import { FormEvent, useRef, useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { Head } from "@inertiajs/react";
+import { PenLine } from "lucide-react";
+import {
+    FormEvent,
+    useEffect,
+    useRef,
+    useState,
+} from "react";
 
-type AddressField = 'to' | 'cc' | 'bcc';
-type FormErrors = Record<string, string[]>;
+import AttachmentList from "@/components/compose/AttachmentList";
+import ComposeFooter from "@/components/compose/ComposeFooter";
+import ComposeMessage from "@/components/compose/ComposeMessage";
+import RecipientFields from "@/components/compose/RecipientFields";
+import type { Recipient,RecipientGroup } from "@/components/compose/RecipientGroupSelector";
 
-const emptyAddresses: Record<AddressField, string[]> = {
-    to: [],
-    cc: [],
-    bcc: [],
-};
+import {
+    emptyAddresses,
+    isValidEmail,
+    parseAddresses,
+    type AddressField,
+    type FormErrors,
+} from "@/utils/email";
 
-function parseAddresses(value: string): string[] {
-    return value
-        .split(/[\s,;]+/)
-        .map((address) => address.trim())
-        .filter(Boolean);
-}
+import { compressImage } from "@/utils/image";
 
-function formatBytes(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
-async function compressImage(file: File): Promise<File> {
-    if (!file.type.startsWith('image/') || file.size <= 1024 * 1024) {
-        return file;
-    }
 
-    try {
-        const image = await decodeImage(file);
-        const scale = Math.min(1, 2000 / Math.max(image.width, image.height));
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.round(image.width * scale));
-        canvas.height = Math.max(1, Math.round(image.height * scale));
-        canvas
-            .getContext('2d')
-            ?.drawImage(image, 0, 0, canvas.width, canvas.height);
-
-        const blob = await canvasToBlob(canvas, 0.75);
-        const compressedBlob =
-            blob && blob.size < file.size
-                ? blob
-                : await canvasToBlob(canvas, 0.55);
-
-        if (!compressedBlob || compressedBlob.size >= file.size) {
-            return file;
-        }
-
-        return new File(
-            [compressedBlob],
-            file.name.replace(/\.[^.]+$/, '.jpg'),
-            {
-                type: 'image/jpeg',
-                lastModified: file.lastModified,
-            },
-        );
-    } catch {
-        return file;
-    }
-}
-
-async function decodeImage(
-    file: File,
-): Promise<ImageBitmap | HTMLImageElement> {
-    if (typeof createImageBitmap === 'function') {
-        return createImageBitmap(file);
-    }
-
-    return new Promise((resolve, reject) => {
-        const image = new Image();
-        const url = URL.createObjectURL(file);
-        image.onload = () => {
-            URL.revokeObjectURL(url);
-            resolve(image);
-        };
-        image.onerror = () => {
-            URL.revokeObjectURL(url);
-            reject(new Error('Unable to decode image'));
-        };
-        image.src = url;
-    });
-}
-
-function canvasToBlob(
-    canvas: HTMLCanvasElement,
-    quality: number,
-): Promise<Blob | null> {
-    return new Promise((resolve) =>
-        canvas.toBlob(resolve, 'image/jpeg', quality),
-    );
-}
 
 export default function Compose() {
-    const [addresses, setAddresses] = useState(emptyAddresses);
-    const [addressInput, setAddressInput] = useState<Record<AddressField, string>>({ to: '', cc: '', bcc: '' });
-    const [subject, setSubject] = useState('');
-    const [body, setBody] = useState('');
-    const [scheduledAt, setScheduledAt] = useState('');
-    const [attachments, setAttachments] = useState<File[]>([]);
-    const [errors, setErrors] = useState<FormErrors>({});
-    const [sending, setSending] = useState(false);
-    const [sent, setSent] = useState(false);
-    const fileInputRef = useRef<HTMLInputElement>(null);
 
 
-    function isValidEmail(address:string):boolean{
+    const [addresses, setAddresses] =
+        useState(emptyAddresses);
 
-        return  /^[a-zA-Z0-9][a-zA-Z0-9._%+-]*@gmail\.com$/.test(address);
+    const [addressInput, setAddressInput] = useState<
+        Record<AddressField, string>
+    >({
+        to: "",
+        cc: "",
+        bcc: "",
+    });
+    const [selectedRecipients, setSelectedRecipients] =
+    useState<Recipient[]>([]);
 
+
+
+    const [recipientGroups, setRecipientGroups] =
+        useState<RecipientGroup[]>([]);
+
+    const [selectedGroups, setSelectedGroups] =
+        useState<RecipientGroup[]>([]);
+
+    const [showGroupSelector, setShowGroupSelector] =
+        useState(false);
+
+    const [loadingGroups, setLoadingGroups] =
+        useState(false);
+
+ 
+
+    const [subject, setSubject] = useState("");
+    const [body, setBody] = useState("");
+    const [scheduledAt, setScheduledAt] = useState("");
+
+    const [attachments, setAttachments] =
+        useState<File[]>([]);
+
+
+    const [errors, setErrors] =
+        useState<FormErrors>({});
+
+    const [sending, setSending] =
+        useState(false);
+
+    const [sent, setSent] =
+        useState(false);
+
+    const fileInputRef =
+        useRef<HTMLInputElement>(null);
+
+
+    useEffect(() => {
+        async function loadRecipientGroups() {
+            setLoadingGroups(true);
+
+            try {
+                const response = await fetch(
+                    "/api/recipient-groups",
+                    {
+                        headers: {
+                            Accept: "application/json",
+                        },
+                    },
+                );
+
+                if (!response.ok) {
+                    throw new Error(
+                        "Unable to load recipient groups",
+                    );
+                }
+
+                const data: RecipientGroup[] =
+                    await response.json();
+
+                setRecipientGroups(data);
+            } catch {
+                setErrors((current) => ({
+                    ...current,
+                    form: [
+                        "Unable to load recipient groups.",
+                    ],
+                }));
+            } finally {
+                setLoadingGroups(false);
+            }
+        }
+
+        loadRecipientGroups();
+    }, []);
+       
+
+
+    const toggleRecipient = (recipient: Recipient) => {
+    setSelectedRecipients((current) => {
+        const exists = current.some(
+            (item) => item.id === recipient.id,
+        );
+
+        if (exists) {
+            return current.filter(
+                (item) => item.id !== recipient.id,
+            );
+        }
+
+        return [...current, recipient];
+    });
+};
+
+
+    function handleInputChange(
+        field: AddressField,
+        value: string,
+    ) {
+        setAddressInput((current) => ({
+            ...current,
+            [field]: value,
+        }));
     }
 
-    function addAddresses(field: AddressField, value = addressInput[field]) {
+
+    function addAddresses(
+        field: AddressField,
+        value = addressInput[field],
+    ) {
         const newAddresses = parseAddresses(value);
-        if (newAddresses.length === 0) return;
+
+        if (newAddresses.length === 0) {
+            return;
+        }
+
+        const invalidAddresses = newAddresses.filter(
+            (address) => !isValidEmail(address),
+        );
+
+        if (invalidAddresses.length > 0) {
+            setErrors((current) => ({
+                ...current,
+                [field]: [
+                    `Invalid email address: ${invalidAddresses.join(", ")}`,
+                ],
+            }));
+
+            return;
+        }
 
         setAddresses((current) => ({
             ...current,
-            [field]: [...new Set([...current[field], ...newAddresses])],
+            [field]: [
+                ...new Set([
+                    ...current[field],
+                    ...newAddresses,
+                ]),
+            ],
         }));
-        setAddressInput((current) => ({ ...current, [field]: '' }));
+
+        setAddressInput((current) => ({
+            ...current,
+            [field]: "",
+        }));
+
+        setErrors((current) => {
+            const updated = { ...current };
+
+            delete updated[field];
+
+            return updated;
+        });
     }
 
-    function removeAddress(field: AddressField, address: string) {
+
+
+    function removeAddress(
+        field: AddressField,
+        address: string,
+    ) {
         setAddresses((current) => ({
             ...current,
-            [field]: current[field].filter((item) => item !== address),
+            [field]: current[field].filter(
+                (item) => item !== address,
+            ),
         }));
     }
+
+
 
     function handleAddressKeyDown(
         event: React.KeyboardEvent<HTMLInputElement>,
         field: AddressField,
     ) {
-        if (event.key === 'Enter' || event.key === ',' || event.key === ' ') {
+        if (
+            event.key === "Enter" ||
+            event.key === "," ||
+            event.key === " "
+        ) {
             event.preventDefault();
+
             addAddresses(field);
         }
     }
 
-    function handleFiles(event: React.ChangeEvent<HTMLInputElement>) {
-        const selectedFiles = Array.from(event.target.files ?? []);
+
+
+ const toggleGroup = (
+    group: RecipientGroup,
+    recipients: Recipient[],
+) => {
+    const selected = selectedGroups.some(
+        (item) => item.id === group.id,
+    );
+
+    if (selected) {
+        setSelectedGroups((current) =>
+            current.filter(
+                (item) => item.id !== group.id,
+            ),
+        );
+
+        setSelectedRecipients((current) =>
+            current.filter(
+                (recipient) =>
+                    recipient.recipient_group_id !==
+                    group.id,
+            ),
+        );
+
+        return;
+    }
+
+    setSelectedGroups((current) => [
+        ...current,
+        group,
+    ]);
+
+    setSelectedRecipients((current) => {
+        const existingIds = new Set(
+            current.map((item) => item.id),
+        );
+
+        const newRecipients = recipients.filter(
+            (recipient) =>
+                !existingIds.has(recipient.id),
+        );
+
+        return [...current, ...newRecipients];
+    });
+};
+    function removeGroup(groupId: number) {
+        setSelectedGroups((current) =>
+            current.filter(
+                (group) => group.id !== groupId,
+            ),
+        );
+
+        setSelectedRecipients((current) =>
+            current.filter(
+                (recipient) => recipient.recipient_group_id !== groupId,
+            ),
+        );
+    }
+
+    function toggleGroupSelector() {
+        setShowGroupSelector(
+            (current) => !current,
+        );
+    }
+
+
+
+    function handleFiles(
+        event: React.ChangeEvent<HTMLInputElement>,
+    ) {
+        const selectedFiles = Array.from(
+            event.target.files ?? [],
+        );
+
         setAttachments((current) => [
             ...current,
+
             ...selectedFiles.filter(
                 (file) =>
                     !current.some(
-                        (currentFile) => currentFile.name === file.name,
+                        (currentFile) =>
+                            currentFile.name ===
+                            file.name,
                     ),
             ),
         ]);
-        event.target.value = '';
+
+        event.target.value = "";
     }
 
-    async function submit(event: FormEvent<HTMLFormElement>) {
+ 
+
+    async function submit(
+        event: FormEvent<HTMLFormElement>,
+    ) {
         event.preventDefault();
-        addAddresses('to');
-        addAddresses('cc');
-        addAddresses('bcc');
+
+        const selectedRecipientEmails = selectedRecipients.map((recipient)=>recipient.email)
+
+
+        const finalTo =Array.from(new Set([...addresses.to,...parseAddresses(addressInput.to),...selectedRecipientEmails]))
+
+        
+        const finalCc = [
+            ...addresses.cc,
+            ...parseAddresses(addressInput.cc),
+        ];
+
+        const finalBcc = [
+            ...addresses.bcc,
+            ...parseAddresses(addressInput.bcc),
+        ];
+
+   
+
+        const invalidTo = finalTo.filter(
+            (address) => !isValidEmail(address),
+        );
+
+        const invalidCc = finalCc.filter(
+            (address) => !isValidEmail(address),
+        );
+
+        const invalidBcc = finalBcc.filter(
+            (address) => !isValidEmail(address),
+        );
+
+        if (
+            invalidTo.length ||
+            invalidCc.length ||
+            invalidBcc.length
+        ) {
+            setErrors({
+                ...(invalidTo.length
+                    ? {
+                          to: [
+                              `Invalid email address: ${invalidTo.join(", ")}`,
+                          ],
+                      }
+                    : {}),
+
+                ...(invalidCc.length
+                    ? {
+                          cc: [
+                              `Invalid email address: ${invalidCc.join(", ")}`,
+                          ],
+                      }
+                    : {}),
+
+                ...(invalidBcc.length
+                    ? {
+                          bcc: [
+                              `Invalid email address: ${invalidBcc.join(", ")}`,
+                          ],
+                      }
+                    : {}),
+            });
+
+            return;
+        }
+
+  
+
+        const uniqueTo = [
+            ...new Set(finalTo),
+        ];
+
+        const uniqueCc = [
+            ...new Set(finalCc),
+        ];
+
+        const uniqueBcc = [
+            ...new Set(finalBcc),
+        ];
+
+  
+
+        if (
+            uniqueTo.length === 0 &&
+            selectedGroups.length === 0
+        ) {
+            setErrors({
+                to: [
+                    "Please enter at least one recipient or select a recipient group.",
+                ],
+            });
+
+            return;
+        }
+
         setSending(true);
         setSent(false);
         setErrors({});
 
+
         const formData = new FormData();
-        [...addresses.to, ...parseAddresses(addressInput.to)].forEach(
-            (address) => formData.append('to[]', address),
+
+        uniqueTo.forEach((address) => {
+            formData.append(
+                "to[]",
+                address,
+            );
+        });
+
+        uniqueCc.forEach((address) => {
+            formData.append(
+                "cc[]",
+                address,
+            );
+        });
+
+        uniqueBcc.forEach((address) => {
+            formData.append(
+                "bcc[]",
+                address,
+            );
+        });
+
+
+
+        selectedGroups.forEach((group) => {
+            formData.append(
+                "recipient_groups[]",
+                group.slug,
+            );
+        });
+
+        selectedRecipients.forEach((recipient)=>{
+            formData.append(
+                "recipient_ids[]",
+                String(recipient.id)
+            )
+        })
+
+        formData.append(
+            "subject",
+            subject,
         );
-        [...addresses.cc, ...parseAddresses(addressInput.cc)].forEach(
-            (address) => formData.append('cc[]', address),
+
+        formData.append(
+            "body",
+            body,
         );
-        [...addresses.bcc, ...parseAddresses(addressInput.bcc)].forEach(
-            (address) => formData.append('bcc[]', address),
-        );
-        formData.append('subject', subject);
-        formData.append('body', body);
+
+
+
         if (scheduledAt) {
             formData.append(
-                'scheduled_at',
-                new Date(scheduledAt).toISOString(),
+                "scheduled_at",
+                new Date(
+                    scheduledAt,
+                ).toISOString(),
             );
         }
-        const filesToUpload = await Promise.all(attachments.map(compressImage));
-        filesToUpload.forEach((file) => formData.append('attachments[]', file));
+
+
+        const filesToUpload =
+            await Promise.all(
+                attachments.map(
+                    compressImage,
+                ),
+            );
+
+        filesToUpload.forEach((file) => {
+            formData.append(
+                "attachments[]",
+                file,
+            );
+        });
+
 
         try {
-            const response = await fetch('/api/emails', {
-                method: 'POST',
-                body: formData,
-                headers: { Accept: 'application/json' },
-            });
+            const response = await fetch(
+                "/api/emails",
+                {
+                    method: "POST",
+                    body: formData,
+                    headers: {
+                        Accept: "application/json",
+                    },
+                },
+            );
 
             if (!response.ok) {
-                const result = await response.json().catch(() => ({}));
+                const result =
+                    await response
+                        .json()
+                        .catch(() => ({}));
+
                 setErrors(
-                    result.errors ?? { form: ['Unable to send this email.'] },
+                    result.errors ?? {
+                        form: [
+                            "Unable to send this email.",
+                        ],
+                    },
                 );
+
                 return;
             }
 
+
             setSent(true);
-            setAddresses(emptyAddresses);
-            setAddressInput({ to: '', cc: '', bcc: '' });
-            setSubject('');
-            setBody('');
-            setScheduledAt('');
+
+            setAddresses(
+                emptyAddresses,
+            );
+
+            setAddressInput({
+                to: "",
+                cc: "",
+                bcc: "",
+            });
+
+            setSelectedGroups([]);
+
+            setSelectedRecipients([]);
+
+            setShowGroupSelector(false);
+
+            setSubject("");
+
+            setBody("");
+
+            setScheduledAt("");
+
             setAttachments([]);
         } catch {
-            setErrors({ form: ['The email service could not be reached.'] });
+            setErrors({
+                form: [
+                    "The email service could not be reached.",
+                ],
+            });
         } finally {
             setSending(false);
         }
     }
 
+
+
     return (
         <>
             <Head title="Compose email" />
-            <main className="min-h-[calc(100vh-4rem)] bg-stone-50/70 px-4 py-8 sm:px-8 dark:bg-stone-950/30">
+
+            <main className="bg-background min-h-[calc(100vh-4rem)] px-4 py-8 sm:px-8">
                 <div className="mx-auto max-w-5xl">
+
+                    {/* Header */}
                     <div className="mb-8 flex items-end justify-between gap-4">
                         <div>
-                            <p className="mb-2 text-xs font-semibold tracking-[0.2em] text-orange-600 uppercase dark:text-orange-400">
+                            <p className="text-primary mb-2 text-xs font-semibold tracking-[0.2em] uppercase">
                                 Outbox
                             </p>
+
                             <h1 className="text-3xl font-semibold tracking-tight">
                                 Compose email
                             </h1>
+
                             <p className="text-muted-foreground mt-2 text-sm">
                                 Write something worth opening.
                             </p>
                         </div>
-                        <div className="hidden size-12 items-center justify-center rounded-2xl bg-orange-100 text-orange-700 sm:flex dark:bg-orange-950/50 dark:text-orange-300">
+
+                        <div className="bg-accent text-accent-foreground hidden size-12 items-center justify-center rounded-2xl sm:flex">
                             <PenLine className="size-5" />
                         </div>
                     </div>
 
+                    {/* Compose form */}
                     <form
                         onSubmit={submit}
                         className="bg-background overflow-hidden rounded-2xl border shadow-sm"
                     >
-                        <div className="border-b px-5 py-4 sm:px-8">
-                            {(['to', 'cc', 'bcc'] as AddressField[]).map(
-                                (field) => (
-                                    <div
-                                        key={field}
-                                        className="flex min-h-12 items-center gap-4 border-b last:border-0"
-                                    >
-                                        <Label
-                                            className="text-muted-foreground w-12 shrink-0 text-sm capitalize"
-                                            htmlFor={`${field}-input`}
-                                        >
-                                            {field}
-                                        </Label>
-                                        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 py-2">
-                                            {addresses[field].map((address) => (
-                                                <span
-                                                    key={address}
-                                                    className="inline-flex max-w-full items-center gap-1 rounded-full bg-orange-100 px-3 py-1 text-xs font-medium text-orange-900 dark:bg-orange-950/60 dark:text-orange-200"
-                                                >
-                                                    <span className="truncate">
-                                                        {address}
-                                                    </span>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() =>
-                                                            removeAddress(
-                                                                field,
-                                                                address,
-                                                            )
-                                                        }
-                                                        aria-label={`Remove ${address}`}
-                                                        className="rounded-full p-0.5 hover:bg-orange-200 dark:hover:bg-orange-900"
-                                                    >
-                                                        <X className="size-3" />
-                                                    </button>
-                                                </span>
-                                            ))}
-                                            <Input
-                                                id={`${field}-input`}
-                                                value={addressInput[field]}
-                                                onChange={(event) =>
-                                                    setAddressInput(
-                                                        (current) => ({
-                                                            ...current,
-                                                            [field]:
-                                                                event.target
-                                                                    .value,
-                                                        }),
-                                                    )
-                                                }
-                                                onBlur={() =>
-                                                    addAddresses(field)
-                                                }
-                                                onKeyDown={(event) =>
-                                                    handleAddressKeyDown(
-                                                        event,
-                                                        field,
-                                                    )
-                                                }
-                                                placeholder={
-                                                    field === 'to'
-                                                        ? 'name@example.com'
-                                                        : 'Optional'
-                                                }
-                                                className="h-8 min-w-45 flex-1 border-0 px-0 shadow-none focus-visible:ring-0"
-                                                type="text"
-                                            />
-                                        </div>
-                                    </div>
-                                ),
-                            )}
-                            {errors.to && (
-                                <p className="text-destructive mt-2 text-xs">
-                                    {errors.to.join(' ')}
-                                </p>
-                            )}
-                        </div>
 
-                        <div className="px-5 py-6 sm:px-8">
-                            <Input
-                                value={subject}
-                                onChange={(event) =>
-                                    setSubject(event.target.value)
-                                }
-                                placeholder="Subject"
-                                className="h-12 border-0 px-0 text-xl font-medium shadow-none focus-visible:ring-0"
-                            />
-                            {errors.subject && (
-                                <p className="text-destructive mt-1 text-xs">
-                                    {errors.subject.join(' ')}
-                                </p>
-                            )}
-                            <textarea
-                                value={body}
-                                onChange={(event) =>
-                                    setBody(event.target.value)
-                                }
-                                placeholder="Start writing..."
-                                className="placeholder:text-muted-foreground mt-5 min-h-72 w-full resize-y border-0 bg-transparent text-[15px] leading-7 outline-none focus:ring-0"
-                            />
-                            {errors.body && (
-                                <p className="text-destructive text-xs">
-                                    {errors.body.join(' ')}
-                                </p>
-                            )}
-                            <div className="mt-6 flex flex-wrap items-center gap-3 border-t pt-5">
-                                <Label
-                                    htmlFor="scheduled-at"
-                                    className="text-muted-foreground text-sm"
-                                >
-                                    Send later
-                                </Label>
-                                <Input
-                                    id="scheduled-at"
-                                    type="datetime-local"
-                                    value={scheduledAt}
-                                    min={new Date(Date.now() + 60_000)
-                                        .toISOString()
-                                        .slice(0, 16)}
-                                    onChange={(event) =>
-                                        setScheduledAt(event.target.value)
-                                    }
-                                    className="w-auto"
-                                />
-                                {scheduledAt && (
-                                    <button
-                                        type="button"
-                                        onClick={() => setScheduledAt('')}
-                                        className="text-muted-foreground text-xs underline underline-offset-4"
-                                    >
-                                        Clear schedule
-                                    </button>
-                                )}
-                                {errors.scheduled_at && (
-                                    <p className="text-destructive basis-full text-xs">
-                                        {errors.scheduled_at.join(' ')}
-                                    </p>
-                                )}
-                            </div>
-                        </div>
+                        {/* Recipients */}
+                        <RecipientFields
+                             selectedRecipients={selectedRecipients}
+                             onToggleRecipient={toggleRecipient}
+                            addresses={addresses}
+                            addressInput={addressInput}
+                            errors={errors}
+                            recipientGroups={
+                                recipientGroups
+                            }
+                            selectedGroups={
+                                selectedGroups
+                            }
+                            loadingGroups={
+                                loadingGroups
+                            }
+                            showGroupSelector={
+                                showGroupSelector
+                            }
+                            onInputChange={
+                                handleInputChange
+                            }
+                            onAddAddress={
+                                addAddresses
+                            }
+                            onKeyDown={
+                                handleAddressKeyDown
+                            }
+                            onRemoveAddress={
+                                removeAddress
+                            }
+                            onToggleGroup={
+                                toggleGroup
+                            }
+                            onToggleGroupSelector={
+                                toggleGroupSelector
+                            }
+                            onRemoveGroup={
+                                removeGroup
+                            }
+                        />
 
-                        {attachments.length > 0 && (
-                            <div className="mx-5 mb-5 flex flex-wrap gap-2 sm:mx-8">
-                                {attachments.map((file) => (
-                                    <div
-                                        key={file.name}
-                                        className="flex items-center gap-2 rounded-lg border px-3 py-2 text-xs"
-                                    >
-                                        <Paperclip className="size-3.5 text-orange-600" />
-                                        <span className="max-w-48 truncate">
-                                            {file.name}
-                                        </span>
-                                        <span className="text-muted-foreground">
-                                            {formatBytes(file.size)}
-                                        </span>
-                                        <button
-                                            type="button"
-                                            onClick={() =>
-                                                setAttachments((current) =>
-                                                    current.filter(
-                                                        (item) =>
-                                                            item.name !==
-                                                            file.name,
-                                                    ),
-                                                )
-                                            }
-                                            aria-label={`Remove ${file.name}`}
-                                        >
-                                            <X className="text-muted-foreground size-3.5" />
-                                        </button>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
+                        {/* Subject + editor + schedule */}
+                        <ComposeMessage
+                            subject={subject}
+                            body={body}
+                            scheduledAt={
+                                scheduledAt
+                            }
+                            errors={errors}
+                            onSubjectChange={
+                                setSubject
+                            }
+                            onBodyChange={
+                                setBody
+                            }
+                            onScheduleChange={
+                                setScheduledAt
+                            }
+                            onClearSchedule={() =>
+                                setScheduledAt("")
+                            }
+                        />
 
-                        <div className="flex flex-wrap items-center justify-between gap-3 border-t bg-stone-50/70 px-5 py-4 sm:px-8 dark:bg-stone-950/30">
-                            <div>
-                                <input
-                                    ref={fileInputRef}
-                                    type="file"
-                                    multiple
-                                    onChange={handleFiles}
-                                    className="hidden"
-                                />
-                                <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() =>
-                                        fileInputRef.current?.click()
-                                    }
-                                >
-                                    <Paperclip />
-                                    Attach files
-                                </Button>
-                            </div>
-                            <Button
-                                type="submit"
-                                disabled={sending}
-                                className="bg-orange-600 text-white hover:bg-orange-700"
-                            >
-                                {sending
-                                    ? 'Sending...'
-                                    : sent
-                                      ? 'Sent'
-                                      : 'Send email'}
-                                {!sending && !sent && <Send />}
-                            </Button>
-                        </div>
+                        {/* Attachments */}
+                        <AttachmentList
+                            attachments={
+                                attachments
+                            }
+                            onRemove={(fileName) =>
+                                setAttachments(
+                                    (current) =>
+                                        current.filter(
+                                            (file) =>
+                                                file.name !==
+                                                fileName,
+                                        ),
+                                )
+                            }
+                        />
+
+                        {/* Footer */}
+                        <ComposeFooter
+                            fileInputRef={
+                                fileInputRef
+                            }
+                            sending={sending}
+                            sent={sent}
+                            onFilesChange={
+                                handleFiles
+                            }
+                        />
+
+                        {/* Status */}
                         {(errors.form || sent) && (
                             <div
-                                className={`border-t px-5 py-3 text-sm sm:px-8 ${sent ? 'text-emerald-700 dark:text-emerald-400' : 'text-destructive'}`}
+                                className={`border-t px-5 py-3 text-sm sm:px-8 ${
+                                    sent
+                                        ? "text-emerald-700 dark:text-emerald-400"
+                                        : "text-destructive"
+                                }`}
                             >
                                 {sent
-                                    ? 'Your email was queued successfully.'
-                                    : errors.form?.join(' ')}
+                                    ? "Your email was queued successfully."
+                                    : errors.form?.join(
+                                          " ",
+                                      )}
                             </div>
                         )}
                     </form>
@@ -468,5 +719,10 @@ export default function Compose() {
 }
 
 Compose.layout = {
-    breadcrumbs: [{ title: 'Compose email', href: '/compose' }],
+    breadcrumbs: [
+        {
+            title: "Compose email",
+            href: "/compose",
+        },
+    ],
 };

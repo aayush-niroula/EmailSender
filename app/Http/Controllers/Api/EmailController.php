@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
 use OpenApi\Attributes as OA;
+use App\Models\RecipientGroup;
 
 class EmailController extends Controller
 {
@@ -83,112 +84,306 @@ class EmailController extends Controller
         new OA\Response(response:402,description:'Validation error'),
     ]
  )]
-    public function store(Request $request, FileOptimizer $fileOptimizer)
-    {
+    public function store(
+        Request $request,
+        FileOptimizer $fileOptimizer
+    ) {
+
 
         $request->validate([
-            'to' => ['required', 'array', 'min:1'],
+            'to' => [
+                'nullable',
+                'array',
+            ],
 
-            'to.*' => ['required', 'email', 'distinct'],
+            'to.*' => [
+                'required',
+                'email',
+                'distinct',
+            ],
 
-            'cc' => ['nullable', 'array'],
-            'cc.*' => ['required', 'email', 'distinct'],
+            'cc' => [
+                'nullable',
+                'array',
+            ],
 
-            'bcc' => ['nullable', 'array'],
+            'cc.*' => [
+                'required',
+                'email',
+                'distinct',
+            ],
 
-            'bcc.*' => ['required', 'email', 'distinct'],
+            'bcc' => [
+                'nullable',
+                'array',
+            ],
 
-            'subject' => ['required', 'string', 'max:255'],
+            'bcc.*' => [
+                'required',
+                'email',
+                'distinct',
+            ],
 
-            'body' => ['required', 'string'],
+            'recipient_groups' => [
+                'nullable',
+                'array',
+            ],
 
-            'scheduled_at' => ['nullable', 'date', 'after:now'],
+            'recipient_groups.*' => [
+                'required',
+                'string',
+                'distinct',
+            ],
 
-            'attachments' => ['nullable', 'array'],
+            'subject' => [
+                'required',
+                'string',
+                'max:255',
+            ],
 
-            'attachments.*' => ['file', 'max:10240', 'mimes:jpg,jpeg,png,gif,pdf,doc,docx,xls,xlsx,txt,zip'],
+            'body' => [
+                'required',
+                'string',
+            ],
+
+            'scheduled_at' => [
+                'nullable',
+                'date',
+                'after:now',
+            ],
+
+            'attachments' => [
+                'nullable',
+                'array',
+            ],
+
+            'attachments.*' => [
+                'file',
+                'max:10240',
+                'mimes:jpg,jpeg,png,gif,pdf,doc,docx,xls,xlsx,txt,zip',
+            ],
         ]);
 
-        $email = Email::create([
 
-            'thread_id' => (string) Str::uuid(),
-            'sender' => config('mail.from.address'),
+        $individualRecipients = $request->input(
+            'to',
+            []
+        );
 
-            'recipient' => $request->to,
+        $groupSlugs = $request->input(
+            'recipient_groups',
+            []
+        );
 
-            'cc' => $request->input('cc', []),
+        $groupRecipients = [];
 
-            'bcc' => $request->input('bcc', []),
+        if (! empty($groupSlugs)) {
+            $groups = RecipientGroup::query()
+                ->whereIn('slug', $groupSlugs)
+                ->with('recipients')
+                ->get();
 
-            'subject' => $request->subject,
 
-            'body' => $request->body,
 
-            'scheduled_at' => $request->filled('scheduled_at')
-                ? Carbon::parse($request->scheduled_at)
-                : null,
-            'message_id' => Str::uuid().'@gmail.com',
-            'in_reply_to' => null,
-            'delivery_status' => 'queued',
-        ]);
+            if ($groups->count() !== count(array_unique($groupSlugs))) {
+                return response()->json([
+                    'message' => 'One or more recipient groups were not found.',
+                ], 422);
+            }
 
-        if ($request->hasFile('attachments')) {
 
-            foreach ($request->file('attachments') as $file) {
-
-                $result = $fileOptimizer->optimize($file);
-
-                if ($result['optimized'] ?? false) {
-
-                    Attachment::create([
-                        'email_id' => $email->id,
-
-                        'file_name' => $result['file_name'],
-
-                        'filepath' => $result['filepath'],
-
-                        'mime_type' => $result['mime_type'],
-
-                        'file_size' => $result['file_size'],
-                    ]);
-                } else {
-
-                    $path = $file->store(
-                        'attachments',
-                        'local'
-                    );
-
-                    Attachment::create([
-                        'email_id' => $email->id,
-
-                        'file_name' => $file->getClientOriginalName(),
-
-                        'filepath' => $path,
-
-                        'mime_type' => $file->getMimeType(),
-
-                        'file_size' => $file->getSize(),
-                    ]);
+            foreach ($groups as $group) {
+                foreach ($group->recipients as $recipient) {
+                    $groupRecipients[] = $recipient->email;
                 }
             }
         }
 
-        $job = SendEmailJob::dispatch($email);
 
-        if ($email->scheduled_at) {
-            $job->delay($email->scheduled_at);
+
+        $allRecipients = array_merge(
+            $individualRecipients,
+            $groupRecipients
+        );
+
+
+        $allRecipients = collect($allRecipients)
+            ->map(fn ($email) => strtolower(trim($email)))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+
+
+        if (empty($allRecipients)) {
+            return response()->json([
+                'message' => 'At least one recipient or recipient group is required.',
+                'errors' => [
+                    'to' => [
+                        'Please add at least one recipient or select a recipient group.',
+                    ],
+                ],
+            ], 422);
         }
 
+
+
+        $cc = collect(
+            $request->input('cc', [])
+        )
+            ->map(fn ($email) => strtolower(trim($email)))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        $bcc = collect(
+            $request->input('bcc', [])
+        )
+            ->map(fn ($email) => strtolower(trim($email)))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+
+
+        $scheduledAt = $request->filled('scheduled_at')
+            ? Carbon::parse($request->scheduled_at)
+            : null;
+
+ 
+
+        $emails = [];
+
+        foreach ($allRecipients as $recipient) {
+            $email = Email::create([
+                'thread_id' => (string) Str::uuid(),
+
+                'sender' => config(
+                    'mail.from.address'
+                ),
+
+                'recipient' => [
+                    $recipient,
+                ],
+
+                'cc' => $cc,
+
+                'bcc' => $bcc,
+
+                'subject' => $request->subject,
+
+                'body' => $request->body,
+
+                'scheduled_at' => $scheduledAt,
+
+                'message_id' => Str::uuid()
+                    . '@gmail.com',
+
+                'in_reply_to' => null,
+
+                'delivery_status' => 'queued',
+            ]);
+
+            $emails[] = $email;
+        }
+
+
+
+        if ($request->hasFile('attachments')) {
+            foreach ($emails as $email) {
+                foreach (
+                    $request->file('attachments')
+                    as $file
+                ) {
+                    $result =
+                        $fileOptimizer->optimize(
+                            $file
+                        );
+
+                    if (
+                        $result['optimized']
+                        ?? false
+                    ) {
+                        Attachment::create([
+                            'email_id' => $email->id,
+
+                            'file_name' =>
+                                $result['file_name'],
+
+                            'filepath' =>
+                                $result['filepath'],
+
+                            'mime_type' =>
+                                $result['mime_type'],
+
+                            'file_size' =>
+                                $result['file_size'],
+                        ]);
+                    } else {
+                        $path = $file->store(
+                            'attachments',
+                            'local'
+                        );
+
+                        Attachment::create([
+                            'email_id' => $email->id,
+
+                            'file_name' =>
+                                $file->getClientOriginalName(),
+
+                            'filepath' => $path,
+
+                            'mime_type' =>
+                                $file->getMimeType(),
+
+                            'file_size' =>
+                                $file->getSize(),
+                        ]);
+                    }
+                }
+            }
+        }
+
+
+        foreach ($emails as $email) {
+            $job = SendEmailJob::dispatch(
+                $email
+            );
+
+            if ($email->scheduled_at) {
+                $job->delay(
+                    $email->scheduled_at
+                );
+            }
+        }
+
+
+
         return response()->json([
-            'message' => $email->scheduled_at
-                ? 'Email scheduled successfully'
-                : 'Email queued successfully',
+            'message' => $scheduledAt
+                ? 'Emails scheduled successfully'
+                : 'Emails queued successfully',
 
-            'email' => $email,
+            'total_recipients' =>
+                count($allRecipients),
 
-            'recipients' => $request->to,
+            'recipients' =>
+                $allRecipients,
 
-            'attachments' => $email->attachments,
+            'groups' =>
+                $groupSlugs,
+
+            'emails' =>
+                collect($emails)
+                    ->map(function ($email) {
+                        return $email->load(
+                            'attachments'
+                        );
+                    }),
+
         ], 202);
     }
 

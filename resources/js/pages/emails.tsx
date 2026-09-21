@@ -22,11 +22,11 @@ export default function Emails({ emails }: Props) {
     return (
         <>
             <Head title="Emails" />
-            <main className="min-h-screen bg-stone-50/70 px-4 py-8 sm:px-8 dark:bg-stone-950/30">
+            <main className="bg-background min-h-screen px-4 py-8 sm:px-8">
                 <div className="mx-auto max-w-4xl">
                     <div className="mb-8 flex items-center justify-between gap-4">
                         <div>
-                            <p className="mb-2 text-xs font-semibold tracking-[0.2em] text-orange-600 uppercase dark:text-orange-400">
+                            <p className="text-primary mb-2 text-xs font-semibold tracking-[0.2em] uppercase">
                                 Mailbox
                             </p>
                             <h1 className="text-3xl font-semibold tracking-tight">
@@ -53,7 +53,7 @@ export default function Emails({ emails }: Props) {
                                     <Link
                                         key={email.id}
                                         href={`/emails/${email.id}`}
-                                        className="block px-5 py-4 transition-colors hover:bg-orange-50/70 sm:px-8 dark:hover:bg-orange-950/20"
+                                        className="hover:bg-muted/70 block px-5 py-4 transition-colors sm:px-8"
                                     >
                                         <div className="flex items-start justify-between gap-4">
                                             <div className="min-w-0">

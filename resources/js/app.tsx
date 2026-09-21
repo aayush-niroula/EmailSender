@@ -22,6 +22,8 @@ void createInertiaApp({
                 return null;
             case name === 'compose':
                 return null;
+            case name === 'emails':
+                return null;
             case name.startsWith('auth/'):
                 return AuthLayout;
             case name.startsWith('settings/'):

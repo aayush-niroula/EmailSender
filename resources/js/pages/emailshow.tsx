@@ -27,6 +27,7 @@ export default function EmailShow({ email, conversation }: Props) {
     const [showReply, setShowReply] = useState(false);
     const [body, setBody] = useState('');
     const [sending, setSending] = useState(false);
+    
 
     const sendReply = async () => {
         if (!body.trim()) {
@@ -68,13 +69,13 @@ export default function EmailShow({ email, conversation }: Props) {
     };
 
     return (
-        <div className="min-h-screen bg-gray-100 p-6 text-black">
-            <div className="mx-auto max-w-4xl rounded-lg bg-gray-500 shadow">
+        <div className="bg-background min-h-screen p-6 text-foreground">
+            <div className="bg-card mx-auto max-w-4xl rounded-lg border shadow-sm">
                 {/* Header */}
                 <div className="border-b p-6">
                     <h1 className="text-2xl font-semibold">{email.subject}</h1>
 
-                    <p className="mt-2 text-sm text-black">
+                    <p className="text-muted-foreground mt-2 text-sm">
                         {conversation.length} messages in this conversation
                     </p>
                 </div>
@@ -82,7 +83,7 @@ export default function EmailShow({ email, conversation }: Props) {
                 {/* Conversation */}
                 <div className="divide-y">
                     {conversation.map((message) => (
-                        <div key={message.id} className="p-6 bg-gray-500">
+                        <div key={message.id} className="bg-card p-6">
                             {/* Sender */}
                             <div className="flex items-start justify-between">
                                 <div>
